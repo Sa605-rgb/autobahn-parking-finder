@@ -35,7 +35,8 @@ parking_finder/
   geo.py                    coordinates and straight-line distance
   filters.py                search, traffic filters, distance ranking
   formatters.py             labels, Google Maps links, map popup HTML
-  dashboard.py              page, location, loading
+  start_panel.py            first screen: pick a road, then a location
+  dashboard.py              page, location, loading, and the item list
   panels.py                 cards and map markers
   static/app.css            layout
 ```
@@ -170,18 +171,17 @@ Phone-width layout:
 3. Tap any road, for example **A1** or **A7**. The line under the buttons should name that road.
 4. Tap **Berlin**, or **Use my location**. The screen closes. The bar says `Nearest on A1` (or whichever road you picked), the map shows your point and that stop, and the first card is marked **Nearest**.
 5. Every parking card should say **Availability unknown**.
-6. **Open nearest in Google Maps** opens directions from your point. **Show on map** opens the popup.
+6. **Show on this map** moves this page's map to the nearest stop. **Open in Google Maps** on a card opens directions from your point.
 7. Open **Traffic** and **Webcams**. Webcams may be an empty state. That is a real API result, not a crash.
 8. `python -m pytest` should pass without calling the network.
 
 ## Live link
 
-IONOS webspace only serves HTML and PHP, so this Python app cannot run there. [Render](https://render.com) runs the Docker image and gives an `https://` address. The reviewer opens that address. No zip.
+Run it from this folder with the commands above. IONOS webspace only serves HTML and PHP, so this Python app cannot run there. A public `https://` address needs [Render](https://render.com):
 
-1. Push this folder to GitHub.
-2. Sign in at https://dashboard.render.com with GitHub.
-3. **New** → **Blueprint** → select the `autobahn-parking-finder` repo.
-4. Apply. The first start takes a few minutes. Render prints a URL like `https://autobahn-parking-finder.onrender.com`.
+1. Sign in at https://dashboard.render.com with GitHub.
+2. **New** → **Blueprint** → select the `autobahn-parking-finder` repo.
+3. Apply. The first start takes a few minutes. Render prints a URL like `https://autobahn-parking-finder.onrender.com`.
 
 The free service sleeps after inactivity. The first open can take about a minute, then the app loads. **Use my location** works on that `https://` address.
 
