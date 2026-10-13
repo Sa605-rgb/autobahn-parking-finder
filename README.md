@@ -144,13 +144,21 @@ The live feed has moved past the older OpenAPI examples. Parking coordinates usu
 
 ## Screenshots
 
-Desktop, Autobahn A7, parking markers on the map:
+First screen. Pick a road, then a location:
 
-![A7 parking on the map](docs/screenshots/02-a7-parking.png)
+![First screen](docs/screenshots/01-start.png)
 
-Marker popup after **Show on map**, with distance from a manual point in Berlin:
+A2 from Berlin. The bar names the nearest stop, and the line is the straight-line distance:
 
-![Map popup](docs/screenshots/04-map-focus.png)
+![Nearest stop on A2](docs/screenshots/02-nearest-map.png)
+
+The parking chip opens the list on this same page:
+
+![Parking list](docs/screenshots/03-parking-list.png)
+
+**Show on this map** opens that stop on the map already on the page:
+
+![Map popup](docs/screenshots/04-map-popup.png)
 
 Traffic tab (roadworks, warnings, closures):
 
