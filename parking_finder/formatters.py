@@ -21,11 +21,14 @@ def format_coordinates(point: GeoPoint | None) -> str:
     return f"{point.lat:.5f}, {point.lng:.5f}"
 
 
-def google_maps_url(point: GeoPoint) -> str:
-    """Driving directions to the stop. Google uses the device's real location as the start."""
+def google_maps_url(point: GeoPoint, origin: GeoPoint | None = None) -> str:
+    """Driving directions to the stop. A known origin is the start of the route."""
+    start = ""
+    if origin is not None:
+        start = f"&origin={origin.lat:.6f},{origin.lng:.6f}"
     return (
         "https://www.google.com/maps/dir/?api=1"
-        f"&destination={point.lat:.6f},{point.lng:.6f}&travelmode=driving"
+        f"{start}&destination={point.lat:.6f},{point.lng:.6f}&travelmode=driving"
     )
 
 
@@ -67,7 +70,7 @@ def popup_html(title: str, lines: list[str], maps_url: str | None) -> str:
     )
 
 
-def parking_popup(area: ParkingArea) -> str:
+def parking_popup(area: ParkingArea, origin: GeoPoint | None = None) -> str:
     lines = [
         f"Autobahn {area.road}",
         f"Direction: {show(area.direction)}",
@@ -77,5 +80,5 @@ def parking_popup(area: ParkingArea) -> str:
         lines.append(format_distance(area.distance_km) + " away (straight line)")
     elif area.point is None:
         lines.append("Coordinates: Not provided")
-    url = google_maps_url(area.point) if area.point else None
+    url = google_maps_url(area.point, origin) if area.point else None
     return popup_html(area.name, lines, url)

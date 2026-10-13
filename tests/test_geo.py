@@ -64,7 +64,11 @@ def test_distance_and_maps_url():
     url = google_maps_url(GeoPoint(52.5, 13.4))
     assert url.startswith("https://www.google.com/maps/dir/")
     assert "destination=52.500000,13.400000" in url
+    assert "origin=" not in url
     assert "travelmode=driving" in url
+    routed = google_maps_url(GeoPoint(52.5, 13.4), GeoPoint(52.52, 13.405))
+    assert "origin=52.520000,13.405000" in routed
+    assert "destination=52.500000,13.400000" in routed
 
 
 def test_popup_escapes_api_text():

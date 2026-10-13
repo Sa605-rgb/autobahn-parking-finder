@@ -1,6 +1,7 @@
 """Entry point. Run with: python main.py"""
 
 import logging
+import os
 
 from nicegui import app, ui
 
@@ -45,6 +46,8 @@ def main() -> None:
         show=settings.open_browser,
         favicon="🚚",
         on_air=True if settings.on_air else None,
+        storage_secret=os.environ.get("STORAGE_SECRET", "local-dev-only"),
+        forwarded_allow_ips="*",
     )
 
 

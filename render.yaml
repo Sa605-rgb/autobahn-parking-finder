@@ -1,0 +1,16 @@
+# Render reads this file and starts the Docker app on a public HTTPS address.
+services:
+  - type: web
+    name: autobahn-parking-finder
+    runtime: docker
+    plan: free
+    healthCheckPath: /
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+      - key: OPEN_BROWSER
+        value: "0"
+      - key: ON_AIR
+        value: "0"
+      - key: STORAGE_SECRET
+        generateValue: true

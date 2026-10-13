@@ -9,10 +9,11 @@ from nicegui import ui
 
 from parking_finder.api import AutobahnClient, AutobahnError
 from parking_finder.filters import filter_parking, filter_traffic, filter_webcams, rank_parking
-from parking_finder.formatters import ranking_message
+from parking_finder.formatters import format_distance, ranking_message
 from parking_finder.models import GeoPoint, ParkingArea, TrafficItem, Webcam
 from parking_finder.panels import render_map, render_parking, render_summary, render_traffic, render_webcams
 from parking_finder.parse import parse_closures, parse_parking, parse_roadworks, parse_warnings, parse_webcams
+from parking_finder.start_panel import build_start_screen
 
 logger = logging.getLogger("parking_finder")
 _CSS = (Path(__file__).with_name("static") / "app.css").read_text(encoding="utf-8")
@@ -88,6 +89,13 @@ class Dashboard:
             "Source: Autobahn GmbH des Bundes · https://verkehr.autobahn.de/o/autobahn · "
             "No database · Straight-line distance only · Not an official navigation device."
         ).classes("footer-note")
+        self.start = build_start_screen(
+            on_road=self._on_start_road,
+            on_chip=self._pick_chip,
+            on_locate=self._use_browser_location,
+            on_city=self._use_city,
+            on_apply=self._apply_start,
+        )
         ui.timer(0.1, self._boot, once=True)
 
     def _header(self) -> None:
@@ -158,12 +166,28 @@ class Dashboard:
 
     def _main(self) -> None:
         with ui.column().classes("main-col"):
+            with ui.element("div").classes("nearest-bar"):
+                self.nearest_label = ui.label("Choose a road and a location to see the nearest stop.").classes("nearest-title")
+                with ui.row().classes("items-center gap-2"):
+                    self.nearest_button = ui.button(
+                        "Show on this map",
+                        icon="map",
+                        on_click=self._show_nearest_here,
+                    )
+                    ui.button("Change search", on_click=lambda: self.start.root.set_visibility(True)).props("outline")
+            self.nearest_button.disable()
             self.summary_box = ui.element("div").classes("stats")
             self.loading_row = ui.row().classes("items-center gap-2")
             with self.loading_row:
                 ui.spinner(size="sm", color="primary")
                 ui.label("Loading live Autobahn data…")
             self.loading_row.set_visibility(False)
+            with ui.dialog() as self.section_dialog:
+                with ui.card().classes("section-dialog"):
+                    with ui.row().classes("w-full items-center justify-between"):
+                        self.section_title = ui.label("").classes("panel-title")
+                        ui.button(icon="close", on_click=self.section_dialog.close).props("flat round dense")
+                    self.section_box = ui.column().classes("w-full section-scroll")
             self.leaflet = ui.leaflet(
                 center=(51.1657, 10.4515),
                 zoom=6,
@@ -183,15 +207,16 @@ class Dashboard:
                         ui.element("span").classes("dot").style(f"background:{color}")
                         ui.label(label)
             with ui.tabs().classes("w-full") as tabs:
-                parking_tab = ui.tab("Parking", icon="local_parking")
-                traffic_tab = ui.tab("Traffic", icon="warning")
-                webcam_tab = ui.tab("Webcams", icon="videocam")
-            with ui.tab_panels(tabs, value=parking_tab).classes("w-full"):
-                with ui.tab_panel(parking_tab):
+                self.parking_tab = ui.tab("Parking", icon="local_parking")
+                self.traffic_tab = ui.tab("Traffic", icon="warning")
+                self.webcam_tab = ui.tab("Webcams", icon="videocam")
+            self.tabs = tabs
+            with ui.tab_panels(tabs, value=self.parking_tab).classes("w-full"):
+                with ui.tab_panel(self.parking_tab):
                     self.parking_box = ui.column().classes("w-full")
-                with ui.tab_panel(traffic_tab):
+                with ui.tab_panel(self.traffic_tab):
                     with ui.row().classes("w-full items-end gap-2"):
-                        ui.select(
+                        self.kind_select = ui.select(
                             {"all": "All types", "roadwork": "Roadworks", "warning": "Warnings", "closure": "Closures"},
                             value="all",
                             label="Type",
@@ -205,7 +230,7 @@ class Dashboard:
                         ).classes("grow")
                     ui.input(label="Filter messages", on_change=self._on_traffic_query).classes("w-full")
                     self.traffic_box = ui.column().classes("w-full")
-                with ui.tab_panel(webcam_tab):
+                with ui.tab_panel(self.webcam_tab):
                     ui.input(label="Filter cameras", on_change=self._on_webcam_query).classes("w-full")
                     self.webcam_box = ui.column().classes("w-full")
         self._paint_lists()
@@ -231,15 +256,54 @@ class Dashboard:
         self._suppress = True
         self.road_select.options = roads
         self.road_select.update()
+        self.start.road.options = roads
+        self.start.road.update()
         self._suppress = False
-        self.road_status.set_text(f"{len(roads)} roads loaded. Pick one, for example A7.")
+        self.road_status.set_text(f"{len(roads)} roads loaded. Pick any road. A1 to A7 are on the first screen.")
         self._hide_banner()
 
     async def _on_road(self, event) -> None:
         if self._suppress or not event.value:
             return
+        self._sync_road(event.value, source="sidebar")
         await ui.run_javascript("document.activeElement && document.activeElement.blur()")
         await self._load_selected(event.value)
+
+    async def _on_start_road(self, event) -> None:
+        if self._suppress or not event.value:
+            return
+        self._sync_road(event.value, source="start")
+        await ui.run_javascript("document.activeElement && document.activeElement.blur()")
+        await self._load_selected(event.value)
+
+    async def _pick_chip(self, road: str) -> None:
+        options = self.road_select.options or []
+        if not options:
+            ui.notify("The road list is still loading.", type="warning")
+            return
+        if road not in options:
+            ui.notify(f"{road} is not in the live road list.", type="warning")
+            return
+        self._sync_road(road, source="chip")
+        await self._load_selected(road)
+
+    def _sync_road(self, road: str, *, source: str) -> None:
+        self._suppress = True
+        if source != "sidebar":
+            self.road_select.value = road
+        if source != "start":
+            self.start.road.value = road
+        self._suppress = False
+        self._mark_road(road)
+
+    def _mark_road(self, road: str) -> None:
+        for name, button in self.start.roads.items():
+            if name == road:
+                button.props(remove="outline")
+                button.props("unelevated color=primary")
+            else:
+                button.props(remove="unelevated color=primary")
+                button.props("outline")
 
     async def _reload(self) -> None:
         if not self.road_select.options:
@@ -308,8 +372,24 @@ class Dashboard:
         self._update_rank_note()
         self._paint_lists()
         self._draw(fit=True)
+        if self.session.origin is not None:
+            self.start.root.set_visibility(False)
+        else:
+            self.start.status.set_text(f"{road} selected. Now tap where you are.")
+
+    def _has_road(self) -> bool:
+        return bool(self.session.road or self.road_select.value or self.start.road.value)
+
+    def _need_road(self) -> bool:
+        if self._has_road():
+            return True
+        ui.notify("Select a road first. Tap A1 to A7.", type="warning")
+        self.start.status.set_text("Select a road first. Tap A1 to A7.")
+        return False
 
     async def _use_browser_location(self) -> None:
+        if not self._need_road():
+            return
         self.location_status.set_text("Asking the browser for your location…")
         try:
             result = await ui.run_javascript(_GEO_JS, timeout=16.0)
@@ -325,6 +405,7 @@ class Dashboard:
             message = result.get("error") if isinstance(result, dict) else None
             message = message or "Location permission was denied or is unavailable."
             self.location_status.set_text(f"{message} Enter latitude and longitude instead.")
+            self.start.status.set_text(f"{message} Pick a city or type coordinates.")
             ui.notify(message, type="warning")
             return
         try:
@@ -333,13 +414,17 @@ class Dashboard:
         except (KeyError, TypeError, ValueError):
             self.location_status.set_text("The browser returned an unreadable position. Enter coordinates manually.")
             return
-        self.lat_input.set_value(lat)
-        self.lng_input.set_value(lng)
         self._set_origin(GeoPoint(lat, lng), f"Browser location {lat:.5f}, {lng:.5f}")
 
+    def _apply_start(self) -> None:
+        self._apply_values(self.start.lat.value, self.start.lng.value)
+
     def _apply_manual(self) -> None:
-        lat = self.lat_input.value
-        lng = self.lng_input.value
+        self._apply_values(self.lat_input.value, self.lng_input.value)
+
+    def _apply_values(self, lat, lng) -> None:
+        if not self._need_road():
+            return
         if lat is None or lng is None:
             ui.notify("Enter both latitude and longitude.", type="warning")
             self.location_status.set_text("Coordinates are incomplete. Distance ranking stays unchanged.")
@@ -350,16 +435,31 @@ class Dashboard:
         point = GeoPoint(float(lat), float(lng))
         self._set_origin(point, f"Manual point {point.lat:.5f}, {point.lng:.5f}")
 
+    def _use_city(self, name: str, lat: float, lng: float) -> None:
+        if not self._need_road():
+            return
+        self._set_origin(GeoPoint(lat, lng), f"{name} {lat:.4f}, {lng:.4f}")
+
     def _clear_location(self) -> None:
         self.lat_input.set_value(None)
         self.lng_input.set_value(None)
+        self.start.lat.set_value(None)
+        self.start.lng.set_value(None)
         self.session.origin = None
         self.location_status.set_text("Location cleared.")
+        self.start.status.set_text("Location cleared. Set where you are, then show the nearest stop.")
         self._rerank()
 
     def _set_origin(self, point: GeoPoint, label: str) -> None:
         self.session.origin = point
+        self.lat_input.set_value(point.lat)
+        self.lng_input.set_value(point.lng)
+        self.start.lat.set_value(point.lat)
+        self.start.lng.set_value(point.lng)
         self.location_status.set_text(label)
+        self.start.status.set_text(label if self.session.road else f"{label}. Now choose an Autobahn.")
+        if self.session.road:
+            self.start.root.set_visibility(False)
         self._rerank()
 
     def _rerank(self) -> None:
@@ -369,11 +469,117 @@ class Dashboard:
         self._paint_lists()
         self._draw(fit=True)
 
+    def _nearest_area(self) -> ParkingArea | None:
+        for area in self.session.parking:
+            if area.point is not None and area.distance_km is not None:
+                return area
+        return None
+
+    def _update_nearest(self) -> None:
+        if not hasattr(self, "nearest_label"):
+            return
+        area = self._nearest_area()
+        if self.session.origin is None or area is None or area.distance_km is None:
+            self.nearest_label.set_text("Choose a road and a location to see the nearest stop.")
+            self.nearest_button.disable()
+            return
+        text = f"Nearest on {area.road}: {area.name} · {format_distance(area.distance_km)} from your point."
+        if area.distance_km > 400:
+            text += " This point is far from that Autobahn. Try Berlin, Hamburg, Frankfurt, Cologne, or Munich."
+        self.nearest_label.set_text(text)
+        self.nearest_button.enable()
+
+    def _show_nearest_here(self) -> None:
+        area = self._nearest_area()
+        if area is None or area.point is None:
+            ui.notify("Select a road and a location first.", type="warning")
+            return
+        self._set_layer("show_parking", True)
+        self.tabs.set_value(self.parking_tab)
+        self._draw(fit=True)
+        layer_id = self.session.marker_ids.get(area.id)
+        if layer_id:
+            self.leaflet.run_layer_method(layer_id, "openPopup")
+        self._show_map_here()
+
+    def _open_section(self, key: str) -> None:
+        """Open a list in front of the map. Show on map stays on this page."""
+        self.section_key = key
+        self.dialog_limit = 24
+        if key == "parking":
+            self._set_layer("show_parking", True)
+            self.tabs.set_value(self.parking_tab)
+        elif key == "webcams":
+            self._set_layer("show_webcams", True)
+            self.tabs.set_value(self.webcam_tab)
+        else:
+            layer = {"roadwork": "show_roadworks", "warning": "show_warnings", "closure": "show_closures"}[key]
+            self._set_layer(layer, True)
+            self.session.traffic_kind = key
+            self._suppress = True
+            self.kind_select.set_value(key)
+            self._suppress = False
+            self.tabs.set_value(self.traffic_tab)
+        self._paint_lists()
+        self._draw(fit=True)
+        self._fill_section()
+        self.section_dialog.open()
+
+    def _fill_section(self) -> None:
+        titles = {
+            "parking": "Parking",
+            "roadwork": "Roadworks",
+            "warning": "Warnings",
+            "closure": "Closures",
+            "webcams": "Webcams",
+        }
+        road = self.session.road or ""
+        self.section_title.set_text(f"{titles.get(self.section_key, 'Details')} on {road}")
+        if self.section_key == "parking":
+            render_parking(
+                self.section_box,
+                self.session,
+                self._filtered_parking(),
+                on_focus=self._focus,
+                on_more=self._dialog_more,
+                limit=self.dialog_limit,
+            )
+        elif self.section_key == "webcams":
+            render_webcams(self.section_box, self.session, self._filtered_webcams(), on_focus=self._focus)
+        else:
+            render_traffic(
+                self.section_box,
+                self.session,
+                self._filtered_traffic(),
+                on_focus=self._focus,
+                on_more=self._dialog_more,
+                limit=self.dialog_limit,
+            )
+
+    def _dialog_more(self) -> None:
+        self.dialog_limit += 24
+        self._fill_section()
+
+    def _set_layer(self, attr: str, value: bool) -> None:
+        setattr(self.session, attr, value)
+        checkbox = self._checks.get(attr)
+        if checkbox is None:
+            return
+        self._suppress = True
+        checkbox.set_value(value)
+        self._suppress = False
+
+    def _show_map_here(self) -> None:
+        ui.run_javascript(
+            'document.querySelector(".map-frame")?.scrollIntoView({behavior:"smooth", block:"nearest"})'
+        )
+
     def _update_rank_note(self) -> None:
         missing = sum(1 for area in self.session.parking if area.point is None)
         self.rank_note.set_text(
             ranking_message(has_origin=self.session.origin is not None, missing_coordinates=missing)
         )
+        self._update_nearest()
 
     def _on_query(self, event) -> None:
         self.session.query = event.value or ""
@@ -382,6 +588,8 @@ class Dashboard:
         self._draw(fit=False)
 
     def _on_kind(self, event) -> None:
+        if self._suppress:
+            return
         self.session.traffic_kind = event.value or "all"
         self.session.traffic_limit = 20
         self._paint_traffic()
@@ -427,7 +635,7 @@ class Dashboard:
         return filter_webcams(self.session.webcams, self.session.webcam_query)
 
     def _paint_lists(self) -> None:
-        render_summary(self.summary_box, self.session)
+        render_summary(self.summary_box, self.session, self._open_section)
         self._paint_parking()
         self._paint_traffic()
         self._paint_webcams()
@@ -463,6 +671,7 @@ class Dashboard:
         )
 
     def _focus(self, item) -> None:
+        self.section_dialog.close()
         point = item.point
         if point is None:
             ui.notify("This record has no coordinates, so it cannot be placed on the map.", type="warning")

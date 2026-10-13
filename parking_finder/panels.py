@@ -22,6 +22,7 @@ KIND_LABEL = {
 
 MARKER_STYLE = {
     "parking": {"color": "#0c2340", "fillColor": "#ffcc00", "radius": 8},
+    "nearest": {"color": "#047857", "fillColor": "#ffcc00", "radius": 14},
     "roadwork": {"color": "#9a3412", "fillColor": "#fb923c", "radius": 6},
     "warning": {"color": "#991b1b", "fillColor": "#f87171", "radius": 6},
     "closure": {"color": "#5b21b6", "fillColor": "#c4b5fd", "radius": 6},
@@ -36,25 +37,42 @@ def _field(label: str, value: str) -> None:
         ui.label(value).classes("field-value")
 
 
-def _maps_link(point) -> None:
+def _maps_link(point, origin=None) -> None:
     if point is None:
         ui.label("Navigation unavailable — the API did not send coordinates.").classes("fine-print")
         return
-    ui.link("Open in Google Maps", google_maps_url(point), new_tab=True).classes("nav-link")
+    ui.link("Open in Google Maps", google_maps_url(point, origin), new_tab=True).classes("nav-link")
 
 
-def render_summary(box, session) -> None:
+def render_summary(box, session, on_open: Callable[[str], None]) -> None:
+    """Count chips. Each one opens that list on this same page."""
     box.clear()
     with box:
         if session.road is None:
             ui.label("No Autobahn selected yet").classes("stat")
             return
-        ui.label(f"{session.road}").classes("stat")
-        ui.label(f"{len(session.parking)} parking").classes("stat")
-        ui.label(f"{sum(1 for item in session.traffic if item.kind == 'roadwork')} roadworks").classes("stat")
-        ui.label(f"{sum(1 for item in session.traffic if item.kind == 'warning')} warnings").classes("stat")
-        ui.label(f"{sum(1 for item in session.traffic if item.kind == 'closure')} closures").classes("stat")
-        ui.label(f"{len(session.webcams)} webcams").classes("stat")
+        ui.label(session.road).classes("stat")
+        _stat_button(f"{len(session.parking)} parking", "parking", on_open)
+        _stat_button(
+            f"{sum(1 for item in session.traffic if item.kind == 'roadwork')} roadworks",
+            "roadwork",
+            on_open,
+        )
+        _stat_button(
+            f"{sum(1 for item in session.traffic if item.kind == 'warning')} warnings",
+            "warning",
+            on_open,
+        )
+        _stat_button(
+            f"{sum(1 for item in session.traffic if item.kind == 'closure')} closures",
+            "closure",
+            on_open,
+        )
+        _stat_button(f"{len(session.webcams)} webcams", "webcams", on_open)
+
+
+def _stat_button(text: str, key: str, on_open: Callable[[str], None]) -> None:
+    ui.button(text, on_click=lambda key=key: on_open(key)).props("outline dense no-caps").classes("stat-btn")
 
 
 def render_parking(
@@ -64,6 +82,7 @@ def render_parking(
     *,
     on_focus: Callable[[ParkingArea], None],
     on_more: Callable[[], None],
+    limit: int | None = None,
 ) -> None:
     box.clear()
     with box:
@@ -80,18 +99,25 @@ def render_parking(
             ui.label("Nothing matches that filter.").classes("empty-copy")
             return
 
-        shown = areas[: session.limit]
+        shown = areas[: session.limit if limit is None else limit]
         ui.label(f"Showing {len(shown)} of {len(areas)}").classes("fine-print")
         with ui.element("div").classes("card-grid"):
             for index, area in enumerate(shown):
-                _parking_card(area, nearest=index == 0 and area.distance_km is not None, on_focus=on_focus)
-        if len(areas) > session.limit:
-            remaining = len(areas) - session.limit
+                _parking_card(
+                    area,
+                    nearest=index == 0 and area.distance_km is not None,
+                    on_focus=on_focus,
+                    origin=session.origin,
+                )
+        cap = session.limit if limit is None else limit
+        if len(areas) > cap:
+            remaining = len(areas) - cap
             ui.button(f"Show more ({remaining} left)", on_click=on_more).props("outline")
 
 
-def _parking_card(area: ParkingArea, *, nearest: bool, on_focus: Callable[[ParkingArea], None]) -> None:
-    with ui.element("article").classes("spot-card"):
+def _parking_card(area: ParkingArea, *, nearest: bool, on_focus: Callable[[ParkingArea], None], origin=None) -> None:
+    classes = "spot-card nearest-card" if nearest else "spot-card"
+    with ui.element("article").classes(classes):
         with ui.row().classes("w-full items-start justify-between"):
             ui.label(area.name).classes("spot-name")
             if area.distance_km is not None:
@@ -124,7 +150,7 @@ def _parking_card(area: ParkingArea, *, nearest: bool, on_focus: Callable[[Parki
                     ui.label(f"API id: {area.api_id}").classes("fine-print")
         with ui.row().classes("items-center gap-2"):
             ui.button("Show on map", on_click=lambda area=area: on_focus(area)).props("flat color=primary")
-        _maps_link(area.point)
+        _maps_link(area.point, origin)
 
 
 def render_traffic(
@@ -134,6 +160,7 @@ def render_traffic(
     *,
     on_focus: Callable[[TrafficItem], None],
     on_more: Callable[[], None],
+    limit: int | None = None,
 ) -> None:
     box.clear()
     with box:
@@ -149,16 +176,17 @@ def render_traffic(
         if not items:
             ui.label("Nothing matches that filter.").classes("empty-copy")
             return
-        shown = items[: session.traffic_limit]
+        shown = items[: session.traffic_limit if limit is None else limit]
         ui.label(f"Showing {len(shown)} of {len(items)} messages").classes("fine-print")
         for item in shown:
-            _traffic_card(item, on_focus)
-        if len(items) > session.traffic_limit:
-            remaining = len(items) - session.traffic_limit
+            _traffic_card(item, on_focus, session.origin)
+        cap = session.traffic_limit if limit is None else limit
+        if len(items) > cap:
+            remaining = len(items) - cap
             ui.button(f"Show more ({remaining} left)", on_click=on_more).props("outline")
 
 
-def _traffic_card(item: TrafficItem, on_focus: Callable[[TrafficItem], None]) -> None:
+def _traffic_card(item: TrafficItem, on_focus: Callable[[TrafficItem], None], origin=None) -> None:
     with ui.card().classes("w-full"):
         with ui.row().classes("items-center gap-2"):
             ui.badge(KIND_LABEL.get(item.kind, item.kind))
@@ -176,7 +204,7 @@ def _traffic_card(item: TrafficItem, on_focus: Callable[[TrafficItem], None]) ->
                         ui.label(line).classes("fine-print")
         with ui.row().classes("items-center"):
             ui.button("Show on map", on_click=lambda item=item: on_focus(item)).props("flat color=primary")
-        _maps_link(item.point)
+        _maps_link(item.point, origin)
 
 
 def render_webcams(box, session, cameras: list[Webcam], *, on_focus: Callable[[Webcam], None]) -> None:
@@ -199,10 +227,10 @@ def render_webcams(box, session, cameras: list[Webcam], *, on_focus: Callable[[W
             return
         with ui.element("div").classes("card-grid"):
             for camera in cameras:
-                _webcam_card(camera, on_focus)
+                _webcam_card(camera, on_focus, session.origin)
 
 
-def _webcam_card(camera: Webcam, on_focus: Callable[[Webcam], None]) -> None:
+def _webcam_card(camera: Webcam, on_focus: Callable[[Webcam], None], origin=None) -> None:
     with ui.element("article").classes("spot-card"):
         ui.label(camera.title).classes("spot-name")
         ui.label(show(camera.subtitle)).classes("fine-print")
@@ -218,7 +246,7 @@ def _webcam_card(camera: Webcam, on_focus: Callable[[Webcam], None]) -> None:
         for line in camera.details[:3]:
             ui.label(line).classes("fine-print")
         ui.button("Show on map", on_click=lambda camera=camera: on_focus(camera)).props("flat color=primary")
-        _maps_link(camera.point)
+        _maps_link(camera.point, origin)
 
 
 def clear_data_layers(leaflet, layers: list) -> None:
@@ -239,11 +267,19 @@ def render_map(session, parking: list[ParkingArea], traffic: list[TrafficItem], 
     session.marker_ids = {}
     points: list[tuple[float, float]] = []
 
+    nearest_id = None
+    if session.origin is not None:
+        for area in parking:
+            if area.point is not None and area.distance_km is not None:
+                nearest_id = area.id
+                break
+
     if session.show_parking:
         for area in parking:
             if area.point is None:
                 continue
-            layer = _dot(leaflet, area.point.lat, area.point.lng, "parking", parking_popup(area))
+            kind = "nearest" if area.id == nearest_id else "parking"
+            layer = _dot(leaflet, area.point.lat, area.point.lng, kind, parking_popup(area, session.origin))
             session.data_layers.append(layer)
             session.marker_ids[area.id] = layer.id
             points.append((area.point.lat, area.point.lng))
@@ -260,7 +296,7 @@ def render_map(session, parking: list[ParkingArea], traffic: list[TrafficItem], 
             lines = [KIND_LABEL.get(item.kind, item.kind), show(item.subtitle)]
             if item.details:
                 lines.append(item.details[0])
-            url = google_maps_url(item.point)
+            url = google_maps_url(item.point, session.origin)
             layer = _dot(leaflet, item.point.lat, item.point.lng, item.kind, popup_html(item.title, lines, url))
             session.data_layers.append(layer)
             session.marker_ids[item.id] = layer.id
@@ -273,12 +309,13 @@ def render_map(session, parking: list[ParkingArea], traffic: list[TrafficItem], 
             lines = [show(camera.subtitle)]
             if camera.link_url:
                 lines.append("Camera link available on the card")
-            url = google_maps_url(camera.point)
+            url = google_maps_url(camera.point, session.origin)
             layer = _dot(leaflet, camera.point.lat, camera.point.lng, "webcam", popup_html(camera.title, lines, url))
             session.data_layers.append(layer)
             session.marker_ids[camera.id] = layer.id
             points.append((camera.point.lat, camera.point.lng))
 
+    nearest = next((area for area in parking if area.id == nearest_id), None) if nearest_id else None
     if session.origin is not None:
         origin = session.origin
         layer = _dot(
@@ -286,12 +323,39 @@ def render_map(session, parking: list[ParkingArea], traffic: list[TrafficItem], 
             origin.lat,
             origin.lng,
             "you",
-            popup_html("Your position", ["Used only to rank distance"], None),
+            popup_html("Your position", ["The distance line starts here."], None),
         )
         session.data_layers.append(layer)
         points.append((origin.lat, origin.lng))
+        if nearest is not None and nearest.point is not None and nearest.distance_km is not None:
+            ends = [[origin.lat, origin.lng], [nearest.point.lat, nearest.point.lng]]
+            casing = leaflet.generic_layer(
+                name="polyline",
+                args=[ends, {"color": "#ffffff", "weight": 7, "opacity": 0.95, "lineCap": "round"}],
+            )
+            line = leaflet.generic_layer(
+                name="polyline",
+                args=[ends, {"color": "#0c2340", "weight": 3, "opacity": 0.9, "lineCap": "round"}],
+            )
+            line.run_method(
+                "bindTooltip",
+                format_distance(nearest.distance_km) + " away",
+                {"sticky": True, "className": "distance-tip"},
+            )
+            session.data_layers.append(casing)
+            session.data_layers.append(line)
 
     if not fit:
+        return
+    if session.origin is not None and nearest is not None and nearest.point is not None:
+        leaflet.run_map_method(
+            "fitBounds",
+            [
+                [session.origin.lat, session.origin.lng],
+                [nearest.point.lat, nearest.point.lng],
+            ],
+            {"padding": [56, 56], "maxZoom": 12},
+        )
         return
     if len(points) == 1:
         leaflet.set_center(points[0])

@@ -1,5 +1,7 @@
 # Smart Autobahn Parking Finder
 
+Source code: https://github.com/Sa605-rgb/autobahn-parking-finder
+
 A local web app for truck drivers who need a truck parking area on a German Autobahn. It loads live data from the public Autobahn API, ranks stops by straight-line distance, and opens the chosen pin in Google Maps.
 
 The app does not promise a free space. If the API does not send occupancy, every card says **Availability unknown**.
@@ -131,8 +133,9 @@ The live feed has moved past the older OpenAPI examples. Parking coordinates usu
 
 ## Location, distance, and availability
 
-- **Use my location** asks the browser. That works on `http://127.0.0.1` and `http://localhost`. If you deny it, or the browser has no location API, the page tells you to type coordinates. A denial does not wipe coordinates you already entered.
-- **Apply coordinates** uses the latitude and longitude fields. Latitude must be between -90 and 90. Longitude must be between -180 and 180.
+- The first screen asks for a road, then a location. **A1** to **A7** are one tap. Any other road is in the list. **Use my location**, a city button, or typed coordinates all do the same job.
+- **Use my location** asks the browser. That works on `http://127.0.0.1` and `http://localhost`. If you deny it, or the browser has no location API, tap a city or type coordinates. A denial does not wipe coordinates you already entered.
+- **Use these coordinates** and **Apply coordinates** use the latitude and longitude fields. Latitude must be between -90 and 90. Longitude must be between -180 and 180.
 - With no coordinates, stops are alphabetical and the page says ranking is off.
 - With coordinates, stops are sorted by straight-line kilometres. Stops with no coordinates stay at the bottom.
 - Distance is not a driving route. A nearby pin does not mean you can reach that lot from your direction of travel.
@@ -163,13 +166,24 @@ Phone-width layout:
 ## Verify it is working
 
 1. Start the app and open http://127.0.0.1:8080.
-2. The Autobahn box should say how many roads loaded (about 100).
-3. Choose **A7**. You should see parking cards, a yellow marker chain on the map, and counts for roadworks, warnings, and closures.
-4. Every parking card should say **Availability unknown**.
-5. Enter latitude `52.52` and longitude `13.405`, then **Apply coordinates**. The nearest stops should show a distance, and the first one should be marked **Nearest**.
-6. **Show on map** opens a popup. **Open in Google Maps** opens directions in a new tab.
+2. The first screen should list **A1** through **A7**. The road list underneath loads about 100 roads.
+3. Tap any road, for example **A1** or **A7**. The line under the buttons should name that road.
+4. Tap **Berlin**, or **Use my location**. The screen closes. The bar says `Nearest on A1` (or whichever road you picked), the map shows your point and that stop, and the first card is marked **Nearest**.
+5. Every parking card should say **Availability unknown**.
+6. **Open nearest in Google Maps** opens directions from your point. **Show on map** opens the popup.
 7. Open **Traffic** and **Webcams**. Webcams may be an empty state. That is a real API result, not a crash.
 8. `python -m pytest` should pass without calling the network.
+
+## Live link
+
+IONOS webspace only serves HTML and PHP, so this Python app cannot run there. [Render](https://render.com) runs the Docker image and gives an `https://` address. The reviewer opens that address. No zip.
+
+1. Push this folder to GitHub.
+2. Sign in at https://dashboard.render.com with GitHub.
+3. **New** → **Blueprint** → select the `autobahn-parking-finder` repo.
+4. Apply. The first start takes a few minutes. Render prints a URL like `https://autobahn-parking-finder.onrender.com`.
+
+The free service sleeps after inactivity. The first open can take about a minute, then the app loads. **Use my location** works on that `https://` address.
 
 ## Docker
 
